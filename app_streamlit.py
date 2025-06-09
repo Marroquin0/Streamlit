@@ -21,53 +21,53 @@ def coleta_dados():
 
             navegador.get('https://www.gsuplementos.com.br/lancamentos')
 
-            wait = WebDriverWait(navegador, 30) # Aumentei o tempo de espera para 30 segundos
-            # Espera até que pelo menos um elemento de produto principal esteja visível
+            wait = WebDriverWait(navegador, 30)
             wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="listagemProds"]/div/div/div[contains(@class, "item-prod")]')))
 
             lista_produtos = []
             lista_precos = []
 
-            # Coleta todos os elementos de produto da listagem
             product_elements = navegador.find_elements(By.XPATH, '//*[@id="listagemProds"]/div/div/div[contains(@class, "item-prod")]')
 
             if not product_elements:
-                st.error("ERRO GRAVE: Nenhum elemento de produto encontrado com o XPATH principal. Verifique o XPATH ou se a página está vazia.")
-                return # Sai da função se não encontrar produtos
+                st.error("ERRO GRAVE: Nenhum elemento de produto encontrado com o XPATH principal.")
+                return
 
             st.write(f"DEBUG: Encontrados {len(product_elements)} elementos de produto.")
 
             for i, product_elem in enumerate(product_elements):
                 nome = None
                 valor = None
-                
+
                 try:
-                    # XPATH para o nome: buscando por um h3 dentro do div 'info-prod'
                     nome_element = product_elem.find_element(By.XPATH, './/div[contains(@class, "info-prod")]/span/h3')
-                    nome = nome_element.text.strip() # .strip() para remover espaços em branco
-                    if not nome: # Se o texto for vazio, define como None
+                    nome = nome_element.text.strip()
+                    if not nome:
                         nome = None
                 except NoSuchElementException:
-                    st.warning(f"Nome do produto não encontrado para o item {i+1} no XPATH especificado.")
+                    st.warning(f"Nome do produto não encontrado para o item {i+1}.")
                 except Exception as e:
                     st.warning(f"Erro ao coletar nome para o item {i+1}: {e}")
-                
+
                 try:
-                    # XPATH para o preço: procurando um span dentro de 'preco-prod' que contenha 'R$'
-                    # Este XPATH é mais robusto que span[1]
-                    preco_element = product_elem.find_element(By.XPATH, './/div[contains(@class, "preco-prod")]//span[contains(text(), "R$")]')
+                    # Novo XPath do preço
+                    preco_element = product_elem.find_element(By.XPATH, './/span[1]')
                     valor = preco_element.text.strip()
+
+                    # Adiciona "R$" caso não esteja presente
+                    if valor and not valor.startswith('R$'):
+                        valor = f'R$ {valor}'
+
                     if not valor:
                         valor = None
                 except NoSuchElementException:
-                    st.warning(f"Preço do produto não encontrado para o item {i+1} no XPATH especificado. Verifique a estrutura do preço na página.")
+                    st.warning(f"Preço do produto não encontrado para o item {i+1}.")
                 except Exception as e:
                     st.warning(f"Erro ao coletar preço para o item {i+1}: {e}")
-                
+
                 lista_produtos.append(nome)
                 lista_precos.append(valor)
-            
-            # Garante que as listas tenham o mesmo comprimento para o DataFrame
+
             max_len = max(len(lista_produtos), len(lista_precos))
             lista_produtos.extend([None] * (max_len - len(lista_produtos)))
             lista_precos.extend([None] * (max_len - len(lista_precos)))
@@ -75,23 +75,23 @@ def coleta_dados():
             navegador.quit()
 
             df_coletado = pd.DataFrame({'produto': lista_produtos, 'precos': lista_precos})
-            
+
             st.subheader("DEBUG: DataFrame Coletado (Primeiras 5 linhas)")
-            st.dataframe(df_coletado.head(50)) # Mostra mais linhas para depuração
+            st.dataframe(df_coletado.head(50))
             st.write("Colunas do DataFrame Coletado:", df_coletado.columns.tolist())
 
-            # Verifica se há dados válidos na coluna 'precos' antes de salvar
             if df_coletado.empty or 'precos' not in df_coletado.columns or df_coletado['precos'].dropna().empty:
-                st.error("Erro na coleta: O DataFrame coletado está vazio ou a coluna 'precos' não contém valores válidos após a tentativa de extração. Verifique os XPATHs.")
+                st.error("Erro na coleta: O DataFrame está vazio ou sem valores válidos na coluna 'precos'.")
                 return
 
             os.makedirs('basesoriginais', exist_ok=True)
             df_coletado.to_csv('basesoriginais/Growth_dados.csv', sep=';', index=False)
             st.success("Dados coletados e salvos com sucesso!")
+
         except TimeoutException:
-            st.error("Erro de tempo limite durante a coleta: A página demorou muito para carregar ou o elemento principal não foi encontrado. Verifique sua conexão ou aumente o tempo de espera.")
+            st.error("Erro de tempo limite: A página demorou muito para carregar ou o elemento não foi encontrado.")
         except Exception as e:
-            st.error(f"Erro inesperado durante a coleta de dados: {e}. Verifique o driver do Chrome e a acessibilidade do site. Detalhes: {str(e)}")
+            st.error(f"Erro inesperado na coleta: {e}")
         finally:
             if navegador:
                 navegador.quit()
