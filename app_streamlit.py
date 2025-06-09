@@ -1,6 +1,9 @@
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException, TimeoutException # Importa exceções específicas
 import streamlit as st
 import plotly.express as px
 import os
@@ -8,6 +11,7 @@ import os
 def coleta_dados():
     if not os.path.exists('basesoriginais/Growth_dados.csv'):
         st.info("Coletando dados da web... isso pode levar um momento.")
+        navegador = None # Inicializa navegador como None para garantir que seja fechado
         try:
             options = webdriver.ChromeOptions()
             options.add_argument('--headless')
@@ -17,80 +21,137 @@ def coleta_dados():
 
             navegador.get('https://www.gsuplementos.com.br/lancamentos')
 
+            # Espera até que o elemento principal da lista de produtos esteja presente
+            wait = WebDriverWait(navegador, 20) # Aumentado o tempo de espera
+            wait.until(EC.presence_of_element_located((By.ID, 'listagemProds')))
+
             lista_produtos = []
-
-            for produto in range(1, 31):
-                try:
-                    nome = navegador.find_element(By.XPATH, f'//*[@id="listagemProds"]/div/div/div[{produto}]/div/a/div[1]/div[2]/span/h3').text
-                    lista_produtos.append(nome)
-                except Exception as e:
-                    pass
-
             lista_precos = []
-            for preco in range(1, 31):
+
+            # Coleta de produtos
+            # Tenta pegar todos os elementos de produto para maior robustez
+            product_elements = navegador.find_elements(By.XPATH, '//*[@id="listagemProds"]/div/div/div[contains(@class, "item-prod")]')
+
+            if not product_elements:
+                st.warning("Nenhum elemento de produto encontrado na página com o XPATH fornecido. O XPATH pode estar incorreto ou a página não carregou como esperado.")
+                return # Sai da função se não encontrar produtos
+
+            for product_elem in product_elements:
+                nome = None
+                valor = None
                 try:
-                    # Linha corrigida: removi o 'wait.until' e deixei apenas o find_element
-                    valor = navegador.find_element(By.XPATH, f'//*[@id="listagemProds"]/div/div/div[{preco}]/div/a/div[2]/div/div/span[1]').text
-                    lista_precos.append(valor)
-                except Exception as e:
-                    # Indentação corrigida aqui
-                    st.warning(f"Não foi possível coletar o preço {preco}: {e}")
-                    pass
+                    nome = product_elem.find_element(By.XPATH, './/div[contains(@class, "info-prod")]/span/h3').text
+                except NoSuchElementException:
+                    st.warning("Nome do produto não encontrado para um item.")
+                
+                try:
+                    valor = product_elem.find_element(By.XPATH, './/div[contains(@class, "preco-prod")]/div/div/span[1]').text
+                except NoSuchElementException:
+                    st.warning("Preço do produto não encontrado para um item.")
+                
+                lista_produtos.append(nome)
+                lista_precos.append(valor)
+            
+            # Garante que as listas tenham o mesmo comprimento para o DataFrame, preenchendo com None
+            max_len = max(len(lista_produtos), len(lista_precos))
+            lista_produtos.extend([None] * (max_len - len(lista_produtos)))
+            lista_precos.extend([None] * (max_len - len(lista_precos)))
 
             navegador.quit()
 
-            tb1 = pd.DataFrame(lista_produtos, columns=['produto'])
-            tb2 = pd.DataFrame(lista_precos, columns=['precos'])
-            df_coletado = pd.concat([tb1, tb2], axis=1)
+            df_coletado = pd.DataFrame({'produto': lista_produtos, 'precos': lista_precos})
+            
+            # --- DEPURAÇÃO: Mostra o DataFrame coletado antes de salvar ---
+            st.subheader("DEBUG: DataFrame Coletado (Primeiras 5 linhas)")
+            st.dataframe(df_coletado.head())
+            st.write("Colunas do DataFrame Coletado:", df_coletado.columns.tolist())
+            # --- FIM DEPURAÇÃO ---
+
+            if df_coletado.empty or 'precos' not in df_coletado.columns or df_coletado['precos'].isnull().all():
+                st.error("Erro na coleta: O DataFrame coletado está vazio, a coluna 'precos' está faltando ou todos os valores de preço são nulos. Verifique os XPATHs e o carregamento da página.")
+                return # Sai da função se a coleta falhou criticamente
 
             os.makedirs('basesoriginais', exist_ok=True)
             df_coletado.to_csv('basesoriginais/Growth_dados.csv', sep=';', index=False)
             st.success("Dados coletados e salvos com sucesso!")
+        except TimeoutException:
+            st.error("Erro de tempo limite durante a coleta: A página ou um elemento demorou muito para carregar. Verifique sua conexão ou aumente o tempo de espera.")
         except Exception as e:
-            st.error(f"Erro na coleta de dados: {e}. Verifique o driver do Chrome e a acessibilidade do site.")
+            st.error(f"Erro inesperado durante a coleta de dados: {e}. Verifique o driver do Chrome e a acessibilidade do site. Detalhes: {str(e)}")
+        finally:
+            if navegador: # Garante que o navegador seja fechado mesmo se ocorrer um erro
+                navegador.quit()
     else:
         st.info("Usando dados existentes para evitar nova coleta.")
 
 
 def tratamento_dados():
+    # Esta condição é importante: Se a coleta falhou e retornou None, não tente ler o CSV.
     if not os.path.exists('basestratadas/Growth_dados.csv') or not os.path.exists('basesoriginais/Growth_dados.csv'):
-        st.warning("Arquivo original não encontrado para tratamento. Realize a coleta de dados primeiro.")
-        coleta_dados()
+        st.warning("Arquivo original ou tratado não encontrado. Tentando realizar a coleta de dados.")
+        coleta_dados() # Tenta coletar se os arquivos não existem
         if not os.path.exists('basesoriginais/Growth_dados.csv'):
-            st.error("Não foi possível coletar dados para tratamento.")
+            st.error("Não foi possível coletar dados para tratamento após a tentativa. Verifique logs da coleta.")
             return pd.DataFrame()
 
     try:
         df = pd.read_csv('basesoriginais/Growth_dados.csv', sep=';', encoding='utf-8')
 
-        df['precos'] = df['precos'].str.replace('\n', ' ', regex=False).str.strip()
-        df[['Preco', 'Desconto']] = df['precos'].str.extract(r'R\$\s?([\d.,]+)\s+(\d+)%')
+        # --- DEPURAÇÃO: Mostra o DataFrame lido antes do tratamento ---
+        st.subheader("DEBUG: DataFrame Lido (Primeiras 5 linhas)")
+        st.dataframe(df.head())
+        st.write("Colunas do DataFrame Lido:", df.columns.tolist())
+        # --- FIM DEPURAÇÃO ---
+
+        # Adiciona um check para garantir que 'precos' existe no DataFrame lido
+        if 'precos' not in df.columns:
+            st.error("Erro no tratamento: A coluna 'precos' não foi encontrada no DataFrame lido do CSV. Isso indica um problema na etapa de coleta ou no arquivo CSV gerado.")
+            return pd.DataFrame()
+
+        df['precos'] = df['precos'].astype(str).str.replace('\n', ' ', regex=False).str.strip()
+        
+        # Filtra linhas onde 'precos' não se parece com um preço válido (para evitar erros de regex)
+        df = df[df['precos'].str.contains(r'R\$\s?[\d.,]+', na=False)].copy() # Adiciona .copy() para evitar SettingWithCopyWarning
+        
+        # Usa .str.extract diretamente
+        extracted_data = df['precos'].str.extract(r'R\$\s?([\d.,]+)\s+(\d+)%')
+        df['Preco'] = extracted_data[0]
+        df['Desconto'] = extracted_data[1]
+
         df['Preco'] = df['Preco'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df['Preco'] = pd.to_numeric(df['Preco'], errors='coerce')
         df['Desconto'] = pd.to_numeric(df['Desconto'], errors='coerce')
+        
         df.dropna(subset=['Preco', 'Desconto'], inplace=True)
         df.drop_duplicates(inplace=True)
+        
         df.columns = df.columns.str.lower().str.title()
-        if 'Precos' in df.columns:
-            df.drop(columns=['Precos'], inplace=True)
+        
+        if 'Precos' in df.columns: # 'Precos' com P maiúsculo após df.columns.str.title()
+            df.drop(columns=['Precos'], inplace=True) # Remove a coluna original 'precos'
 
         os.makedirs('basestratadas', exist_ok=True)
         df.to_csv('basestratadas/Growth_dados.csv', sep=';', index=False, encoding='utf-8')
         st.success("Dados tratados e salvos com sucesso!")
         return df
     except Exception as e:
-        st.error(f"Erro no tratamento de dados: {e}")
+        st.error(f"Erro no tratamento de dados: {e}. Detalhes: {str(e)}")
         return pd.DataFrame()
 
 
 st.title('Análise de Produtos da Growth Suplementos')
 
-coleta_dados()
+# A lógica de chamada já está no `tratamento_dados` para garantir que o CSV exista.
 df = tratamento_dados()
 
 if not df.empty:
     st.subheader('Dados Coletados e Tratados')
     st.dataframe(df)
+
+    # Verifica se a coluna 'Preco' existe após o tratamento
+    if 'Preco' not in df.columns:
+        st.error("Erro: A coluna 'Preco' (após tratamento) não foi encontrada. Verifique as etapas de extração de preço.")
+        st.stop() # Para a execução do Streamlit aqui
 
     df['Preco'] = pd.to_numeric(df['Preco'], errors='coerce')
     df.dropna(subset=['Preco'], inplace=True)
