@@ -1,20 +1,12 @@
 <<<<<<< HEAD
 import pandas as pd
-=======
-from flask import Flask, jsonify # Estas importações não são necessárias para Streamlit
 import pandas as pd
-import json # Esta importação não é necessária para Streamlit
->>>>>>> 326dfc3838500f0f8eea6719eefc169a249f265d
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 import streamlit as st
 import plotly.express as px
 import os
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 326dfc3838500f0f8eea6719eefc169a249f265d
 # Função de coleta de dados
 def coleta_dados():
     # Verifique se o arquivo já existe ou se você precisa coletar novos dados
