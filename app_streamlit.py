@@ -28,6 +28,50 @@ def coleta_dados():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     
+    # <--- ESTA É A MUDANÇA FINAL E MAIS IMPORTANTE
+    # Damos o endereço exato do chromedriver que o packages.txt instala.
+    servico = Service(executable_path='/usr/bin/chromedriver')
+    
+    navegador = webdriver.Chrome(service=servico, options=options)
+    
+    lista_produtos = []
+    lista_precos = []
+    
+    with st.spinner('Aguarde! Conectando e coletando dados do site... Isso pode levar um minuto.'):
+        navegador.get('https://www.gsuplementos.com.br/lancamentos')
+        time.sleep(5)
+
+        produtos = navegador.find_elements(By.CLASS_NAME, 'mobile-shelf-item')
+        
+        for produto in produtos:
+            try:
+                nome = produto.find_element(By.TAG_NAME, 'h3').text
+                preco = produto.find_element(By.CLASS_NAME, 'price').text
+                lista_produtos.append(nome)
+                lista_precos.append(preco)
+            except Exception as e:
+                print(f"Erro ao coletar um produto: {e}")
+                
+    navegador.quit()
+
+    if not lista_produtos:
+        st.error("Não foi possível coletar os produtos. O site pode ter mudado sua estrutura.")
+        return pd.DataFrame()
+
+    df = pd.DataFrame({'produto': lista_produtos, 'precos': lista_precos})
+    
+    os.makedirs('basesoriginais', exist_ok=True)
+    df.to_csv('basesoriginais/Growth_dados_raw.csv', sep=';', index=False)
+    
+    return df
+    """Usa Selenium para coletar dados do site da Growth e retorna um DataFrame."""
+    
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    
     # <--- MUDANÇA AQUI (USAMOS O SERVICE SEM O AJUDANTE)
     servico = Service() 
     
