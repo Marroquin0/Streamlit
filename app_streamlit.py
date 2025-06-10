@@ -8,7 +8,7 @@ import plotly.express as px
 import os
 import time
 
-# --- Configuração da Página do Streamlit ---
+
 st.set_page_config(
     page_title="Dashboard de Preços Growth",
     page_icon="💪",
@@ -17,13 +17,11 @@ st.set_page_config(
 
 st.title("💪 Dashboard de Análise de Preços - Growth Supplements")
 
-# --- Funções de Coleta e Tratamento (Otimizadas para Streamlit) ---
+
 
 @st.cache_data
 def coleta_dados():
-    """
-    Usa Selenium para coletar dados do site da Growth e retorna um DataFrame.
-    """
+    
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -39,23 +37,23 @@ def coleta_dados():
     navegador.get('https://www.gsuplementos.com.br/lancamentos')
     time.sleep(7)
 
-    # --- MUDANÇA AQUI: Usando o novo nome da classe para encontrar os produtos ---
+    
     produtos = navegador.find_elements(By.CLASS_NAME, 'cardprod')
     
     for produto in produtos:
         try:
-            # --- MUDANÇA AQUI: Pegando nome e preço com os seletores corretos ---
+            #
             nome = produto.find_element(By.CLASS_NAME, 'cardprod-nomeProduto-t1').text
             preco = produto.find_element(By.CLASS_NAME, 'cardprod-valor').text
             lista_produtos.append(nome)
             lista_precos.append(preco)
         except Exception as e:
-            # Se um produto individual falhar, ele será ignorado e o log aparecerá no terminal
+            
             print(f"Erro ao coletar um produto individual: {e}")
             
     navegador.quit()
 
-    # Se a lista estiver vazia, retorna um DataFrame vazio.
+    
     if not lista_produtos:
         return pd.DataFrame()
 
@@ -67,14 +65,14 @@ def coleta_dados():
 
 @st.cache_data
 def tratamento_dados(df_raw):
-    """Recebe um DataFrame bruto, limpa e trata os dados, e retorna um DataFrame tratado."""
+    
     if df_raw.empty:
         return pd.DataFrame()
 
     df = df_raw.copy()
     
     df['precos'] = df['precos'].str.replace('\n', ' ', regex=False).str.strip()
-    # Extrai apenas o valor principal, ignorando os descontos e parcelas.
+    
     df['Preco'] = df['precos'].str.extract(r'R\$\s*([\d,]+)')
     
     df['Preco'] = df['Preco'].str.replace(',', '.', regex=False)
@@ -90,10 +88,10 @@ def tratamento_dados(df_raw):
     
     return df
 
-# --- Interface Principal do Aplicativo ---
+
 
 if st.button("🚀 Iniciar Coleta e Análise de Dados"):
-    # Limpa o estado da sessão anterior para forçar uma nova coleta
+    
     if 'df_final' in st.session_state:
         del st.session_state.df_final
     
@@ -104,12 +102,12 @@ if st.button("🚀 Iniciar Coleta e Análise de Dados"):
         if not df_tratado.empty:
             st.session_state.df_final = df_tratado
         else:
-            # Garante que se a coleta falhar, a mensagem de erro apareça
+            
             st.session_state.coleta_falhou = True
 
-# --- Lógica de Exibição do Dashboard ou da Mensagem de Erro ---
 
-# Se a coleta foi bem sucedida, mostra o dashboard
+
+
 if 'df_final' in st.session_state:
     st.success("Dados coletados e tratados com sucesso!")
     df = st.session_state.df_final
@@ -118,7 +116,7 @@ if 'df_final' in st.session_state:
     st.header("Visualização dos Dados Tratados")
     st.dataframe(df)
 
-    # ... (O resto do seu dashboard continua aqui, sem alterações) ...
+    
 
     col1, col2 = st.columns(2)
 
@@ -155,8 +153,8 @@ if 'df_final' in st.session_state:
         fig_box = px.box(df, y='Preco', title="Dispersão e Outliers dos Preços")
         st.plotly_chart(fig_box, use_container_width=True)
 
-# Se a coleta falhou, mostra a mensagem de erro
+
 elif 'coleta_falhou' in st.session_state:
     st.error("Não foi possível coletar os produtos. O site pode ter mudado sua estrutura ou pode estar bloqueando o robô.")
-    # Limpa o estado de falha para a próxima tentativa
+    
     del st.session_state.coleta_falhou
