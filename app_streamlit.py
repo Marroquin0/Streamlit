@@ -1,221 +1,149 @@
+import streamlit as st
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
-import streamlit as st
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 import plotly.express as px
 import os
+import time
 
+# --- Configuração da Página do Streamlit ---
+st.set_page_config(
+    page_title="Dashboard de Preços Growth",
+    page_icon="💪",
+    layout="wide"
+)
+
+st.title("💪 Dashboard de Análise de Preços - Growth Supplements")
+
+# --- Funções de Coleta e Tratamento (Otimizadas para Streamlit) ---
+
+# @st.cache_data fará com que esta função só rode uma vez, a menos que o código mude.
+# Isso evita fazer a coleta demorada toda vez que o usuário mexe em um filtro.
+@st.cache_data
 def coleta_dados():
-    if not os.path.exists('basesoriginais/Growth_dados.csv'):
-        st.info("Coletando dados da web... isso pode levar um momento.")
-        navegador = None
-        try:
-            options = webdriver.ChromeOptions()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            navegador = webdriver.Chrome(options=options)
+    """Usa Selenium para coletar dados do site da Growth e retorna um DataFrame."""
+    # Usando webdriver-manager para gerenciar o driver do Chrome automaticamente
+    servico = Service(ChromeDriverManager().install())
+    navegador = webdriver.Chrome(service=servico)
+    
+    lista_produtos = []
+    lista_precos = []
+    
+    with st.spinner('Aguarde! Conectando e coletando dados do site... Isso pode levar um minuto.'):
+        navegador.get('https://www.gsuplementos.com.br/lancamentos')
+        time.sleep(5) # Espera a página carregar completamente
 
-            navegador.get('https://www.gsuplementos.com.br/lancamentos')
-
-            wait = WebDriverWait(navegador, 30)
-            wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="listagemProds"]/div/div/div[contains(@class, "item-prod")]')))
-
-            lista_produtos = []
-            lista_precos = []
-
-            product_elements = navegador.find_elements(By.XPATH, '//*[@id="listagemProds"]/div/div/div[contains(@class, "item-prod")]')
-
-            if not product_elements:
-                st.error("ERRO GRAVE: Nenhum elemento de produto encontrado com o XPATH principal.")
-                return
-
-            st.write(f"DEBUG: Encontrados {len(product_elements)} elementos de produto.")
-
-            for i, product_elem in enumerate(product_elements):
-                nome = None
-                valor = None
-
-                try:
-                    nome_element = product_elem.find_element(By.XPATH, './/div[contains(@class, "info-prod")]/span/h3')
-                    nome = nome_element.text.strip()
-                    if not nome:
-                        nome = None
-                except NoSuchElementException:
-                    st.warning(f"Nome do produto não encontrado para o item {i+1}.")
-                except Exception as e:
-                    st.warning(f"Erro ao coletar nome para o item {i+1}: {e}")
-
-                try:
-                    # Novo XPath do preço
-                    preco_element = product_elem.find_element(By.XPATH, './/span[1]')
-                    valor = preco_element.text.strip()
-
-                    # Adiciona "R$" caso não esteja presente
-                    if valor and not valor.startswith('R$'):
-                        valor = f'R$ {valor}'
-
-                    if not valor:
-                        valor = None
-                except NoSuchElementException:
-                    st.warning(f"Preço do produto não encontrado para o item {i+1}.")
-                except Exception as e:
-                    st.warning(f"Erro ao coletar preço para o item {i+1}: {e}")
-
+        # Encontra os containers de produtos para uma raspagem mais robusta
+        produtos = navegador.find_elements(By.CLASS_NAME, 'mobile-shelf-item')
+        
+        for produto in produtos:
+            try:
+                nome = produto.find_element(By.TAG_NAME, 'h3').text
+                preco = produto.find_element(By.CLASS_NAME, 'price').text
                 lista_produtos.append(nome)
-                lista_precos.append(valor)
+                lista_precos.append(preco)
+            except Exception as e:
+                # É bom saber se algo deu errado, em vez de usar 'pass'
+                print(f"Erro ao coletar um produto: {e}")
+                
+    navegador.quit()
 
-            max_len = max(len(lista_produtos), len(lista_precos))
-            lista_produtos.extend([None] * (max_len - len(lista_produtos)))
-            lista_precos.extend([None] * (max_len - len(lista_precos)))
-
-            navegador.quit()
-
-            df_coletado = pd.DataFrame({'produto': lista_produtos, 'precos': lista_precos})
-
-            st.subheader("DEBUG: DataFrame Coletado (Primeiras 5 linhas)")
-            st.dataframe(df_coletado.head(50))
-            st.write("Colunas do DataFrame Coletado:", df_coletado.columns.tolist())
-
-            if df_coletado.empty or 'precos' not in df_coletado.columns or df_coletado['precos'].dropna().empty:
-                st.error("Erro na coleta: O DataFrame está vazio ou sem valores válidos na coluna 'precos'.")
-                return
-
-            os.makedirs('basesoriginais', exist_ok=True)
-            df_coletado.to_csv('basesoriginais/Growth_dados.csv', sep=';', index=False)
-            st.success("Dados coletados e salvos com sucesso!")
-
-        except TimeoutException:
-            st.error("Erro de tempo limite: A página demorou muito para carregar ou o elemento não foi encontrado.")
-        except Exception as e:
-            st.error(f"Erro inesperado na coleta: {e}")
-        finally:
-            if navegador:
-                navegador.quit()
-    else:
-        st.info("Usando dados existentes para evitar nova coleta.")
-
-
-def tratamento_dados():
-    if not os.path.exists('basestratadas/Growth_dados.csv') or not os.path.exists('basesoriginais/Growth_dados.csv'):
-        st.warning("Arquivo original ou tratado não encontrado. Tentando realizar a coleta de dados.")
-        coleta_dados()
-        if not os.path.exists('basesoriginais/Growth_dados.csv'):
-            st.error("Não foi possível coletar dados para tratamento após a tentativa. Verifique logs da coleta.")
-            return pd.DataFrame()
-
-    try:
-        df = pd.read_csv('basesoriginais/Growth_dados.csv', sep=';', encoding='utf-8')
-
-        df.columns = df.columns.str.lower()
-
-        st.subheader("DEBUG: DataFrame Lido (Primeiras 5 linhas)")
-        st.dataframe(df.head(50)) # Mostra mais linhas para depuração
-        st.write("Colunas do DataFrame Lido:", df.columns.tolist())
-
-        if 'precos' not in df.columns:
-            st.error("Erro no tratamento: A coluna 'precos' (minúscula) não foi encontrada no DataFrame lido do CSV após a conversão para minúsculas. Isso indica um problema na etapa de coleta ou no arquivo CSV gerado (verifique se a coluna 'Precos' com P maiúsculo existia).")
-            return pd.DataFrame()
-        
-        # Converte a coluna 'precos' para string, trata 'None' ou NaN como string vazia para regex
-        df['precos'] = df['precos'].fillna('').astype(str).str.replace('\n', ' ', regex=False).str.strip()
-        
-        # Filtra linhas onde 'precos' não se parece com um preço válido (para evitar erros de regex)
-        # Usa .copy() para evitar SettingWithCopyWarning
-        df = df[df['precos'].str.contains(r'R\$\s?[\d.,]+', na=False)].copy()
-        
-        # Verifica se o DataFrame ficou vazio após a filtragem
-        if df.empty:
-            st.error("Nenhum preço válido foi encontrado no DataFrame após a filtragem por padrão R$. O scraping de preços pode estar falhando.")
-            return pd.DataFrame()
-
-        # Extrai Preço e Desconto
-        extracted_data = df['precos'].str.extract(r'R\$\s?([\d.,]+)\s+(\d+)%')
-        df['Preco'] = extracted_data[0]
-        df['Desconto'] = extracted_data[1]
-
-        df['Preco'] = df['Preco'].str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df['Preco'] = pd.to_numeric(df['Preco'], errors='coerce')
-        df['Desconto'] = pd.to_numeric(df['Desconto'], errors='coerce')
-        
-        df.dropna(subset=['Preco', 'Desconto'], inplace=True)
-        df.drop_duplicates(inplace=True)
-        
-        # Garante que as colunas finais fiquem em Title Case
-        df.columns = df.columns.str.lower().str.title()
-        
-        if 'Precos' in df.columns:
-            df.drop(columns=['Precos'], inplace=True)
-
-        os.makedirs('basestratadas', exist_ok=True)
-        df.to_csv('basestratadas/Growth_dados.csv', sep=';', index=False, encoding='utf-8')
-        st.success("Dados tratados e salvos com sucesso!")
-        return df
-    except Exception as e:
-        st.error(f"Erro no tratamento de dados: {e}. Detalhes: {str(e)}")
+    if not lista_produtos:
+        st.error("Não foi possível coletar os produtos. O site pode ter mudado sua estrutura.")
         return pd.DataFrame()
 
+    df = pd.DataFrame({'produto': lista_produtos, 'precos': lista_precos})
+    
+    # Salvar o arquivo original continua sendo uma boa prática
+    os.makedirs('basesoriginais', exist_ok=True)
+    df.to_csv('basesoriginais/Growth_dados_raw.csv', sep=';', index=False)
+    
+    return df
 
-st.title('Análise de Produtos da Growth Suplementos')
+@st.cache_data
+def tratamento_dados(df_raw):
+    """Recebe um DataFrame bruto, limpa e trata os dados, e retorna um DataFrame tratado."""
+    if df_raw.empty:
+        return pd.DataFrame()
 
-df = tratamento_dados()
+    df = df_raw.copy()
+    
+    df['precos'] = df['precos'].str.replace('\n', ' ', regex=False).str.strip()
+    # Extrai o preço principal (antes do "ou")
+    df['Preco'] = df['precos'].str.extract(r'R\$\s*([\d,]+)')
+    
+    df['Preco'] = df['Preco'].str.replace(',', '.', regex=False)
+    df['Preco'] = pd.to_numeric(df['Preco'], errors='coerce')
+    
+    df.dropna(subset=['Preco'], inplace=True)
+    df.drop_duplicates(inplace=True)
+    
+    # Renomeia as colunas para um padrão limpo
+    df = df[['produto', 'Preco']].rename(columns={'produto': 'Produto'})
 
-if not df.empty:
-    st.subheader('Dados Coletados e Tratados')
+    os.makedirs('basestratadas', exist_ok=True)
+    df.to_csv('basestratadas/Growth_dados_tratados.csv', sep=';', index=False, encoding='utf-8')
+    
+    return df
+
+# --- Interface do Aplicativo ---
+
+# Botão para iniciar o processo. O app só começa de verdade depois disso.
+if st.button("🚀 Iniciar Coleta e Análise de Dados"):
+    df_raw = coleta_dados()
+    if not df_raw.empty:
+        df_tratado = tratamento_dados(df_raw)
+        # Salva o dataframe tratado no estado da sessão para que não se perca
+        st.session_state.df_final = df_tratado 
+        st.success("Dados coletados e tratados com sucesso!")
+
+# O dashboard só será exibido se o dataframe estiver na sessão
+if 'df_final' in st.session_state:
+    df = st.session_state.df_final
+    
+    st.divider()
+    st.header("Visualização dos Dados Tratados")
     st.dataframe(df)
 
-    if 'Preco' not in df.columns:
-        st.error("Erro: A coluna 'Preco' (após tratamento) não foi encontrada. Verifique as etapas de extração de preço.")
-        st.stop()
+    col1, col2 = st.columns(2)
 
-    df['Preco'] = pd.to_numeric(df['Preco'], errors='coerce')
-    df.dropna(subset=['Preco'], inplace=True)
+    with col1:
+        st.subheader("Análise de Nulos")
+        st.dataframe(df.isnull().sum().reset_index().rename(columns={'index': 'Variável', 0: 'Qtd. Nulos'}))
 
-    st.subheader('Análise de Nulos')
-    aux = df.isnull().sum().reset_index()
-    aux.columns = ['Variavel', 'Qtd_Miss']
-    st.dataframe(aux)
+    with col2:
+        st.subheader("Estatísticas Descritivas")
+        st.dataframe(df.describe())
 
-    st.subheader('Análises Univariadas')
-    st.write('Medidas resumo')
-    st.dataframe(df.describe())
+    st.divider()
+    st.header("Análises dos Preços")
 
-    lista_de_colunas_numericas = df.select_dtypes(include=['number']).columns
-    if 'Preco' in lista_de_colunas_numericas:
-        precos = st.selectbox('Escolha a coluna para análise de preço', lista_de_colunas_numericas)
+    media = round(df['Preco'].mean(), 2)
+    desvio = round(df['Preco'].std(), 2)
+    mediana = round(df['Preco'].median(), 2)
+    maximo = round(df['Preco'].max(), 2)
+    minimo = round(df['Preco'].min(), 2)
 
-        media = round(df[precos].mean(),2)
-        desvio = round(df[precos].std(),2)
-        mediana = round(df[precos].quantile(0.5),2)
-        maximo = round(df[precos].max(),2)
-        consumo_minimo = df[precos].min()
+    st.metric("Preço Médio", f"R$ {media}")
+    st.write(f"O preço mediano (50% dos produtos custam até este valor) é de R$ {mediana}.")
+    st.write(f"Os preços variam de **R$ {minimo}** a **R$ {maximo}**.")
+    
+    col_hist, col_box = st.columns(2)
+    
+    with col_hist:
+        st.subheader("Histograma de Preços")
+        fig_hist = px.histogram(df, x='Preco', nbins=20, title="Distribuição de Frequência dos Preços")
+        st.plotly_chart(fig_hist, use_container_width=True)
 
-        st.write(f'A coluna escolhida foi **{precos}**. A sua média é **R$ {media}**. Seu desvio padrão indica que, quando há desvio, desvia em média **R$ {desvio}**. E 50% dos dados vão até o valor **R$ {mediana}**. E seu máximo é de **R$ {maximo}**.')
-        st.write(f'O menor valor de **{precos}** é **R$ {consumo_minimo}** Reais')
+    with col_box:
+        st.subheader("Boxplot de Preços")
+        fig_box = px.box(df, y='Preco', title="Dispersão e Outliers dos Preços")
+        st.plotly_chart(fig_box, use_container_width=True)
 
-        st.write('Histograma')
-        fig = px.histogram(df, x=[precos], title=f'Distribuição de {precos}')
-        st.plotly_chart(fig)
-
-        st.write('Boxplot')
-        fig2 = px.box(df, x=[precos], title=f'Boxplot de {precos}')
-        st.plotly_chart(fig2)
-    else:
-        st.warning("Não há coluna numérica 'Preco' para análise univariada. Verifique o tratamento de dados.")
-
-    st.subheader('Análises Multivariadas')
-    lista_de_colunas_para_dispersao = df.select_dtypes(include=['number']).columns.tolist()
-    lista_de_escolhas = st.multiselect('Escolha exatamente 2 colunas numéricas para avaliar', lista_de_colunas_para_dispersao)
-
-    st.markdown('Gráfico de dispersão')
-    if len(lista_de_escolhas) != 2:
-        st.error('Por favor, escolha **somente 2 colunas** para o gráfico de dispersão.')
-    else:
-        fig3 = px.scatter(df, x=lista_de_escolhas[0], y=lista_de_escolhas[1],
-                          title=f'Dispersão entre {lista_de_escolhas[0]} e {lista_de_escolhas[1]}')
-        st.plotly_chart(fig3)
-else:
-    st.error("Não foi possível carregar os dados para análise. Verifique as etapas de coleta e tratamento.")
+    # A análise multivariada não faz muito sentido com apenas 'Produto' e 'Preço',
+    # mas mantive a lógica caso você adicione mais colunas numéricas no futuro (ex: 'Nota', 'Peso').
+    st.divider()
+    st.header("Análises Multivariadas (Exemplo)")
+    st.info("Para o gráfico de dispersão, você precisaria de mais uma coluna numérica (ex: 'Peso em kg', 'Nota de Avaliação').")
