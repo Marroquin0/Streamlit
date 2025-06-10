@@ -3,6 +3,7 @@ import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import plotly.express as px
 import os
@@ -25,6 +26,11 @@ st.title("💪 Dashboard de Análise de Preços - Growth Supplements")
 def coleta_dados():
     """Usa Selenium para coletar dados do site da Growth e retorna um DataFrame."""
     # Usando webdriver-manager para gerenciar o driver do Chrome automaticamente
+    options = Options()
+    options.add_argument("--headless")  # ESSENCIAL: Roda o Chrome sem interface gráfica
+    options.add_argument("--no-sandbox") # Necessário para rodar em muitos ambientes Linux
+    options.add_argument("--disable-dev-shm-usage") # Evita problemas de memória em contêineres
+    options.add_argument("--disable-gpu")
     servico = Service(ChromeDriverManager().install())
     navegador = webdriver.Chrome(service=servico)
     
